@@ -30,6 +30,11 @@ AutoPower/
     ├── build.md            # 编译说明
     └── user_manual.md      # 用户手册
 ```
+## 软件截图
+<img width="486" height="493" alt="图片" src="https://github.com/user-attachments/assets/b7a03326-2a30-4f31-a9d5-a85fa257da46" />
+<img width="1720" height="952" alt="图片" src="https://github.com/user-attachments/assets/ce9f5208-b528-474a-a253-7dbeabc91dbb" />
+<img width="1720" height="952" alt="图片" src="https://github.com/user-attachments/assets/93f7ec4a-6704-4bba-b421-817b292c6d49" />
+
 
 ## 编译方法
 
@@ -48,10 +53,3 @@ link /SUBSYSTEM:WINDOWS /OUT:AutoPower.exe AutoPower.obj app_icon.res user32.lib
 
 编译完成后得到单个 `AutoPower.exe`，无需任何 DLL，直接双击运行。
 
-## 使用说明
-
-详见 [用户手册](docs/user_manual.md)
-
-## 许可证
-
-MIT License
