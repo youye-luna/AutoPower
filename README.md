@@ -4,9 +4,8 @@
 
 ## 软件截图
 
-<img width="486" height="493" alt="倒计时关机" src="https://github.com/user-attachments/assets/b7a03326-2a30-4f31-a9d5-a85fa257da46" />
-<img width="1720" height="952" alt="软件截图2" src="https://github.com/user-attachments/assets/ce9f5208-b528-474a-a253-7dbeabc91dbb" />
-<img width="1720" height="952" alt="软件截图3" src="https://github.com/user-attachments/assets/93f7ec4a-6704-4bba-b421-817b292c6d49" />
+<img width="1920" height="1080" alt="2026-08-27_14-03" src="https://github.com/user-attachments/assets/12ad40e8-ec01-4922-ad7d-2222c12bb1ad" />
+<img width="1920" height="1080" alt="2026-08-27_14-03_1" src="https://github.com/user-attachments/assets/6c725d40-5877-4688-b2ed-0a0e28f69be6" />
 
 ## 功能特性
 
