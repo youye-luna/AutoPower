@@ -1,14 +1,16 @@
 // AutoPower - 定时关机软件 (单文件版)
-// 编译: cl /utf-8 /EHsc /MT /DUNICODE /D_UNICODE /DWIN32_LEAN_AND_MEAN AutoPower_single.cpp /link /SUBSYSTEM:WINDOWS user32.lib gdi32.lib comctl32.lib advapi32.lib shell32.lib
+// 编译: cl /utf-8 /EHsc /MT /DUNICODE /D_UNICODE /DWIN32_LEAN_AND_MEAN AutoPower_single.cpp /link /SUBSYSTEM:WINDOWS,5.01 user32.lib gdi32.lib comctl32.lib advapi32.lib shell32.lib
 
 #define WINVER 0x0601
 #define _WIN32_WINNT 0x0601
 #define NTDDI_VERSION 0x06010000
 
 #include <windows.h>
+#include <shellapi.h>
 #include <commctrl.h>
 #include <string>
 #include <sstream>
+#include <vector>
 #include <ctime>
 #include <chrono>
 #include <stdexcept>
@@ -44,6 +46,21 @@
 #define IDC_COUNTDOWN_GROUP    1019
 #define IDC_QUICK_GROUP        1020
 #define IDC_STATUS_GROUP       1021
+#define IDC_SECONDS_HINT      1025
+#define IDC_PAGE_TAB          1026
+#define IDC_SCHED_CREATE      1027
+#define IDC_SCHED_DELETE      1028
+#define IDC_SCHED_CLOCK       1029
+#define IDC_SCHED_STATE       1030
+#define IDC_SCHED_HOUR        1032
+#define IDC_SCHED_MIN         1033
+#define IDC_SCHED_HINT        1034
+#define IDC_SCHED_GROUP       1045
+#define IDC_SCHED_CLOCK_GROUP 1046
+#define IDC_SCHED_STATE_GROUP 1048
+
+// ==================== 定时关机任务常量 ====================
+#define SCHED_TASK_NAME       L"\"关机\""
 
 // ==================== 自定义消息 ====================
 #define WM_UPDATE_COUNTDOWN    WM_USER + 1
@@ -74,17 +91,10 @@ public:
         InvalidParameter
     };
 
-    enum ShutdownAction {
-        Shutdown,
-        Restart,
-        Logoff
-    };
-
     ShutdownManager();
     ~ShutdownManager();
 
     ShutdownResult setShutdownTimer(int seconds);
-    ShutdownResult shutdownNow(ShutdownAction action = Shutdown);
     ShutdownResult cancelShutdown();
     bool hasPendingShutdown() const;
     int getRemainingSeconds() const;
@@ -93,8 +103,8 @@ private:
     bool m_hasPendingTask;
     int m_remainingSeconds;
 
-    static VOID CALLBACK ShutdownTimerProc(HWND, UINT, UINT_PTR, DWORD);
-    bool enableShutdownPrivileges();
+    ShutdownResult setSystemShutdown(int seconds);
+    ShutdownResult cancelSystemShutdown();
 };
 
 ShutdownManager::ShutdownManager()
@@ -102,68 +112,39 @@ ShutdownManager::ShutdownManager()
 
 ShutdownManager::~ShutdownManager() {}
 
-bool ShutdownManager::enableShutdownPrivileges() {
-    HANDLE hToken;
-    TOKEN_PRIVILEGES tkp;
-
-    if (!OpenProcessToken(GetCurrentProcess(),
-                         TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY,
-                         &hToken)) {
-        return false;
-    }
-
-    LookupPrivilegeValueW(NULL, SE_SHUTDOWN_NAME, &tkp.Privileges[0].Luid);
-    tkp.PrivilegeCount = 1;
-    tkp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
-    AdjustTokenPrivileges(hToken, FALSE, &tkp, 0, (PTOKEN_PRIVILEGES)NULL, 0);
-    return GetLastError() == 0;
-}
-
 ShutdownManager::ShutdownResult ShutdownManager::setShutdownTimer(int seconds) {
     if (seconds <= 0) return InvalidParameter;
 
-    if (!enableShutdownPrivileges()) return AccessDenied;
+    // 使用系统命令模式：shutdown -s -t
+    return setSystemShutdown(seconds);
+}
 
-    if (hasPendingShutdown()) cancelShutdown();
+ShutdownManager::ShutdownResult ShutdownManager::cancelShutdown() {
+    if (!hasPendingShutdown()) return Success;
 
-    static UINT_PTR nShutdownTimer = 0;
-    if (nShutdownTimer != 0) {
-        KillTimer(NULL, nShutdownTimer);
-        nShutdownTimer = 0;
-    }
+    // 使用 shutdown -a 取消系统关机任务
+    return cancelSystemShutdown();
+}
 
-    nShutdownTimer = SetTimer(NULL, 0, seconds * 1000, &ShutdownManager::ShutdownTimerProc);
-    if (nShutdownTimer == 0) return Failed;
+ShutdownManager::ShutdownResult ShutdownManager::setSystemShutdown(int seconds) {
+    // 先取消已有的系统关机任务
+    if (hasPendingShutdown()) cancelSystemShutdown();
+
+    std::wstring params = L"-s -t " + std::to_wstring(seconds);
+    HINSTANCE hInst = ShellExecuteW(NULL, L"open", L"shutdown.exe",
+        params.c_str(), NULL, SW_HIDE);
+    // ShellExecuteW 返回值大于32表示成功
+    if ((INT_PTR)hInst <= 32) return Failed;
 
     m_hasPendingTask = true;
     m_remainingSeconds = seconds;
     return Success;
 }
 
-ShutdownManager::ShutdownResult ShutdownManager::shutdownNow(ShutdownAction action) {
-    if (!enableShutdownPrivileges()) return AccessDenied;
-
-    UINT flags = 0;
-    switch (action) {
-        case Shutdown:  flags = EWX_SHUTDOWN; break;
-        case Restart:   flags = EWX_REBOOT;   break;
-        case Logoff:    flags = EWX_LOGOFF;   break;
-    }
-
-    if (!ExitWindowsEx(flags, 0)) return Failed;
-    return Success;
-}
-
-ShutdownManager::ShutdownResult ShutdownManager::cancelShutdown() {
-    if (!hasPendingShutdown()) return Success;
-    if (!enableShutdownPrivileges()) return AccessDenied;
-
-    // 取消SetTimer设置的定时器
-    static UINT_PTR nShutdownTimer = 0;
-    if (nShutdownTimer != 0) {
-        KillTimer(NULL, nShutdownTimer);
-        nShutdownTimer = 0;
-    }
+ShutdownManager::ShutdownResult ShutdownManager::cancelSystemShutdown() {
+    HINSTANCE hInst = ShellExecuteW(NULL, L"open", L"shutdown.exe",
+        L"-a", NULL, SW_HIDE);
+    if ((INT_PTR)hInst <= 32) return Failed;
 
     m_hasPendingTask = false;
     m_remainingSeconds = 0;
@@ -172,10 +153,6 @@ ShutdownManager::ShutdownResult ShutdownManager::cancelShutdown() {
 
 bool ShutdownManager::hasPendingShutdown() const { return m_hasPendingTask; }
 int ShutdownManager::getRemainingSeconds() const { return m_remainingSeconds; }
-
-VOID CALLBACK ShutdownManager::ShutdownTimerProc(HWND, UINT, UINT_PTR, DWORD) {
-    ExitWindowsEx(EWX_SHUTDOWN, 0);
-}
 
 // ==================== TimerManager 类 ====================
 class TimerManager {
@@ -333,6 +310,134 @@ void TimerManager::notifyError(ErrorType errorType, const std::wstring& message)
     PostMessageW(m_hwnd, WM_SHOW_ERROR, (WPARAM)pMsg, (LPARAM)errorType);
 }
 
+// ==================== schtasks 命令辅助 ====================
+static int g_lastSchExit = 0;   // 最近一次 schtasks 的退出码
+
+// 以隐藏窗口方式运行 schtasks，同步等待并返回退出码
+static bool RunSchtasks(const std::wstring& args) {
+    std::wstring cmd = L"schtasks.exe " + args;
+    std::vector<wchar_t> buf(cmd.begin(), cmd.end());
+    buf.push_back(L'\0');
+
+    STARTUPINFOW si = {};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    PROCESS_INFORMATION pi = {};
+
+    if (!CreateProcessW(NULL, buf.data(), NULL, NULL, FALSE,
+                        CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
+        g_lastSchExit = -1;
+        return false;
+    }
+    WaitForSingleObject(pi.hProcess, 30000);
+    DWORD code = 1;
+    GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    g_lastSchExit = (int)code;
+    return true;
+}
+
+// 查询系统计划任务「关机」是否存在
+static bool SchTaskExists() {
+    RunSchtasks(std::wstring(L"/query /tn ") + SCHED_TASK_NAME);
+    return g_lastSchExit == 0;
+}
+
+// 提权方式执行 schtasks（触发 UAC）
+static bool ElevatedRunSchtasks(const std::wstring& args) {
+    SHELLEXECUTEINFOW sei = {};
+    sei.cbSize = sizeof(sei);
+    sei.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_FLAG_NO_UI;
+    sei.lpVerb = L"runas";
+    sei.lpFile = L"schtasks.exe";
+    sei.lpParameters = args.c_str();
+    sei.nShow = SW_HIDE;
+    if (!ShellExecuteExW(&sei) || !sei.hProcess) return false;
+    WaitForSingleObject(sei.hProcess, 60000);
+    DWORD code = 1;
+    GetExitCodeProcess(sei.hProcess, &code);
+    CloseHandle(sei.hProcess);
+    return code == 0;
+}
+
+// 时间格式化：HH:MM:SS
+static void GetClockString(wchar_t* buf, size_t cch) {
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    swprintf_s(buf, cch, L"%02u:%02u:%02u", st.wHour, st.wMinute, st.wSecond);
+}
+
+// 计算「现在」到目标 FILETIME 的剩余秒数
+static long long DiffSecondsFromNow(const FILETIME& target) {
+    FILETIME now;
+    GetSystemTimeAsFileTime(&now);
+    ULARGE_INTEGER t, n;
+    t.LowPart = target.dwLowDateTime;   t.HighPart = target.dwHighDateTime;
+    n.LowPart = now.dwLowDateTime;      n.HighPart = now.dwHighDateTime;
+    if (t.QuadPart <= n.QuadPart) return 0;
+    return (long long)((t.QuadPart - n.QuadPart) / 10000000ULL);
+}
+
+// 把剩余秒数格式化为“X小时X分X秒”
+static std::wstring FormatRemaining(long long totalSeconds) {
+    if (totalSeconds <= 0) return L"0秒";
+    long long h = totalSeconds / 3600;
+    int m = (int)(totalSeconds % 3600) / 60;
+    int s = (int)(totalSeconds % 60);
+    std::wstringstream ss;
+    if (h > 0) ss << h << L"小时";
+    if (m > 0) ss << m << L"分";
+    ss << s << L"秒";
+    return ss.str();
+}
+
+// 把 "HH:MM" 解析为 FILETIME：当天该时刻；若已过去则取明天同一时刻
+static bool ParseHHMMToTarget(const std::wstring& hhmm, FILETIME& out) {
+    if (hhmm.size() != 5 || hhmm[2] != L':') return false;
+    int h = _wtoi(hhmm.substr(0, 2).c_str());
+    int m = _wtoi(hhmm.substr(3, 2).c_str());
+    if (h < 0 || h > 23 || m < 0 || m > 59) return false;
+
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    st.wHour = (WORD)h;
+    st.wMinute = (WORD)m;
+    st.wSecond = 0;
+    st.wMilliseconds = 0;
+
+    FILETIME ft;
+    if (!SystemTimeToFileTime(&st, &ft)) return false;
+
+    ULARGE_INTEGER tgt, now;
+    tgt.LowPart = ft.dwLowDateTime;   tgt.HighPart = ft.dwHighDateTime;
+    FILETIME nft;
+    GetSystemTimeAsFileTime(&nft);
+    now.LowPart = nft.dwLowDateTime;  now.HighPart = nft.dwHighDateTime;
+
+    if (tgt.QuadPart <= now.QuadPart)
+        tgt.QuadPart += 24ULL * 3600ULL * 10000000ULL; // 已过时刻 -> 明天
+
+    out.dwLowDateTime = tgt.LowPart;
+    out.dwHighDateTime = tgt.HighPart;
+    return true;
+}
+
+// 删除系统中的「关机」计划任务；失败时询问是否提权重试（触发 UAC）
+static bool DeleteShutdownTask(HWND owner) {
+    RunSchtasks(std::wstring(L"/delete /tn ") + SCHED_TASK_NAME + L" /f");
+    if (g_lastSchExit == 0) return true;
+
+    int r = MessageBoxW(owner,
+        L"直接删除失败（可能需要管理员权限）。\n是否以管理员身份重试？",
+        L"权限不足", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON1);
+    if (r != IDYES) return false;
+    return ElevatedRunSchtasks(
+        std::wstring(L"/delete /tn ") + SCHED_TASK_NAME + L" /f");
+}
+
+
 // ==================== MainWindow 类 ====================
 class MainWindow {
 public:
@@ -349,8 +454,22 @@ private:
     HINSTANCE m_hInstance;
     HWND m_hCountdownEdit, m_hUnitCombo, m_hSetButton, m_hCancelButton;
     HWND m_hCountdownLabel, m_hStatusLabel;
+    HWND m_hSecondsHint;
     HWND m_hQuick10s, m_hQuick30s, m_hQuick1m, m_hQuick5m, m_hQuick10m;
     HWND m_hQuick15m, m_hQuick30m, m_hQuick1h, m_hQuick2h, m_hQuick4h;
+    HWND m_hTab;
+    // 页面切换需要的容器句柄
+    HWND m_hTimeStatic, m_hInputGroupBox;
+    HWND m_hCountdownGroupBox, m_hQuickGroupBox, m_hStatusGroupBox;
+    // 页面2：定时关机
+    HWND m_hSchedClock, m_hSchedCreateBtn, m_hSchedDeleteBtn, m_hSchedState;
+    HWND m_hSchedTimeLabel, m_hSchedHourEdit, m_hSchedColon, m_hSchedMinEdit;
+    HWND m_hSchedHint;
+    HWND m_hSchedGroupBox, m_hSchedClockGroup, m_hSchedStateGroup;
+    bool m_schedActive;
+    std::wstring m_schedHHMM;
+    FILETIME m_schedTarget;
+
     TimerManager* m_timerManager;
     UINT m_uiTimer;
     bool m_reminderShown;
@@ -359,14 +478,25 @@ private:
     void setControlFont(HWND hwnd, int size, bool bold = false);
     void updateCountdown();
     void updateStatus();
+    void updateTitle();
+    void updateInterlock();
     void onSetShutdown();
     void onCancelShutdown();
     void onQuickSet(int seconds);
+    void updateSecondsHint();
     void showReminder();
     void showError(const std::wstring& message);
     int getInputSeconds();
     LRESULT handleMessage(UINT msg, WPARAM wParam, LPARAM lParam);
     void handleCommand(WPARAM wParam);
+
+    // 标签页 / 定时关机
+    void applyPage(int index);
+    void onCreateSchedule();
+    void onDeleteSchedule();
+    void updateSchedStateText();
+    void updateSchedClock();
+    void syncSchedFromSystem();
 };
 
 static MainWindow* g_pMainWindow = NULL;
@@ -377,10 +507,20 @@ MainWindow::MainWindow(HINSTANCE hInstance)
     , m_hCountdownEdit(NULL), m_hUnitCombo(NULL)
     , m_hSetButton(NULL), m_hCancelButton(NULL)
     , m_hCountdownLabel(NULL), m_hStatusLabel(NULL)
+    , m_hSecondsHint(NULL)
     , m_hQuick10s(NULL), m_hQuick30s(NULL), m_hQuick1m(NULL)
     , m_hQuick5m(NULL), m_hQuick10m(NULL), m_hQuick15m(NULL)
     , m_hQuick30m(NULL), m_hQuick1h(NULL), m_hQuick2h(NULL), m_hQuick4h(NULL)
+    , m_hTab(NULL)
+    , m_hTimeStatic(NULL), m_hInputGroupBox(NULL)
+    , m_hCountdownGroupBox(NULL), m_hQuickGroupBox(NULL), m_hStatusGroupBox(NULL)
+    , m_hSchedClock(NULL), m_hSchedCreateBtn(NULL), m_hSchedDeleteBtn(NULL), m_hSchedState(NULL)
+    , m_hSchedTimeLabel(NULL), m_hSchedHourEdit(NULL), m_hSchedColon(NULL), m_hSchedMinEdit(NULL)
+    , m_hSchedHint(NULL)
+    , m_hSchedGroupBox(NULL), m_hSchedClockGroup(NULL), m_hSchedStateGroup(NULL)
+    , m_schedActive(false)
     , m_timerManager(NULL), m_uiTimer(0), m_reminderShown(false) {
+    ZeroMemory(&m_schedTarget, sizeof(m_schedTarget));
     g_pMainWindow = this;
 }
 
@@ -419,6 +559,8 @@ bool MainWindow::create() {
     m_uiTimer = SetTimer(m_hwnd, 1, 1000, NULL);
     updateCountdown();
     updateStatus();
+    syncSchedFromSystem();
+    applyPage(0);
     return true;
 }
 
@@ -428,13 +570,28 @@ void MainWindow::show(int nCmdShow) {
 }
 
 void MainWindow::createControls() {
-    int y = 12;
+    // ====== 标签页 ======
+    m_hTab = CreateWindowExW(0, WC_TABCONTROLW, L"",
+        WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | TCS_TABS,
+        6, 6, 472, 430, m_hwnd, (HMENU)IDC_PAGE_TAB, m_hInstance, NULL);
+    SendMessageW(m_hTab, WM_SETFONT,
+        (WPARAM)(HFONT)GetStockObject(DEFAULT_GUI_FONT), TRUE);
 
-    CreateWindowExW(0, L"BUTTON", L"倒计时设置",
+    TCITEMW tie = {};
+    tie.mask = TCIF_TEXT;
+    tie.pszText = (LPWSTR)L"倒计时关机";
+    SendMessageW(m_hTab, TCM_INSERTITEMW, 0, (LPARAM)&tie);
+    tie.pszText = (LPWSTR)L"定时关机";
+    SendMessageW(m_hTab, TCM_INSERTITEMW, 1, (LPARAM)&tie);
+
+    int y = 44;
+
+    // ====== 页面1：倒计时设置组 ======
+    m_hInputGroupBox = CreateWindowExW(0, L"BUTTON", L"倒计时设置",
         WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
-        10, y, 465, 65, m_hwnd, (HMENU)IDC_INPUT_GROUP, m_hInstance, NULL);
+        10, y, 465, 85, m_hwnd, (HMENU)IDC_INPUT_GROUP, m_hInstance, NULL);
 
-    CreateWindowExW(0, L"STATIC", L"时间：",
+    m_hTimeStatic = CreateWindowExW(0, L"STATIC", L"时间：",
         WS_CHILD | WS_VISIBLE | SS_CENTERIMAGE,
         20, y + 25, 40, 25, m_hwnd, NULL, m_hInstance, NULL);
 
@@ -458,9 +615,13 @@ void MainWindow::createControls() {
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | WS_TABSTOP | WS_DISABLED,
         345, y + 22, 100, 28, m_hwnd, (HMENU)IDC_CANCEL_BUTTON, m_hInstance, NULL);
 
-    y += 75;
+    m_hSecondsHint = CreateWindowExW(0, L"STATIC", L"= 1800 秒",
+        WS_CHILD | WS_VISIBLE | SS_CENTERIMAGE,
+        20, y + 55, 425, 20, m_hwnd, (HMENU)IDC_SECONDS_HINT, m_hInstance, NULL);
 
-    CreateWindowExW(0, L"BUTTON", L"倒计时显示",
+    y += 95;
+
+    m_hCountdownGroupBox = CreateWindowExW(0, L"BUTTON", L"倒计时显示",
         WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
         10, y, 465, 65, m_hwnd, (HMENU)IDC_COUNTDOWN_GROUP, m_hInstance, NULL);
 
@@ -471,7 +632,7 @@ void MainWindow::createControls() {
 
     y += 75;
 
-    CreateWindowExW(0, L"BUTTON", L"快捷设置",
+    m_hQuickGroupBox = CreateWindowExW(0, L"BUTTON", L"快捷设置",
         WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
         10, y, 465, 90, m_hwnd, (HMENU)IDC_QUICK_GROUP, m_hInstance, NULL);
 
@@ -517,7 +678,7 @@ void MainWindow::createControls() {
 
     y += 100;
 
-    CreateWindowExW(0, L"BUTTON", L"状态信息",
+    m_hStatusGroupBox = CreateWindowExW(0, L"BUTTON", L"状态信息",
         WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
         10, y, 465, 50, m_hwnd, (HMENU)IDC_STATUS_GROUP, m_hInstance, NULL);
 
@@ -526,11 +687,82 @@ void MainWindow::createControls() {
         WS_CHILD | WS_VISIBLE | SS_LEFT | SS_CENTERIMAGE,
         20, y + 18, 440, 25, m_hwnd, (HMENU)IDC_STATUS_LABEL, m_hInstance, NULL);
 
+    // ====== 页面2：定时关机（布局与页面1一致） ======
+    int sy = 44;
+
+    // 定时设置组（对应"倒计时设置"）
+    m_hSchedGroupBox = CreateWindowExW(0, L"BUTTON", L"定时设置",
+        WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
+        10, sy, 465, 85, m_hwnd, (HMENU)IDC_SCHED_GROUP, m_hInstance, NULL);
+
+    m_hSchedTimeLabel = CreateWindowExW(0, L"STATIC", L"关机时间：",
+        WS_CHILD | WS_VISIBLE | SS_CENTERIMAGE,
+        20, sy + 25, 78, 25, m_hwnd, NULL, m_hInstance, NULL);
+
+    SYSTEMTIME stNow; GetLocalTime(&stNow);
+    wchar_t initBuf[4];
+
+    m_hSchedHourEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_CENTER | ES_NUMBER,
+        98, sy + 23, 46, 30, m_hwnd, (HMENU)IDC_SCHED_HOUR, m_hInstance, NULL);
+    SendMessageW(m_hSchedHourEdit, EM_LIMITTEXT, 2, 0);
+    swprintf_s(initBuf, L"%02u", stNow.wHour);
+    SetWindowTextW(m_hSchedHourEdit, initBuf);
+
+    m_hSchedColon = CreateWindowExW(0, L"STATIC", L"：",
+        WS_CHILD | WS_VISIBLE | SS_CENTER | SS_CENTERIMAGE,
+        144, sy + 25, 18, 25, m_hwnd, NULL, m_hInstance, NULL);
+
+    m_hSchedMinEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_CENTER | ES_NUMBER,
+        162, sy + 23, 46, 30, m_hwnd, (HMENU)IDC_SCHED_MIN, m_hInstance, NULL);
+    SendMessageW(m_hSchedMinEdit, EM_LIMITTEXT, 2, 0);
+    swprintf_s(initBuf, L"%02u", stNow.wMinute);
+    SetWindowTextW(m_hSchedMinEdit, initBuf);
+
+    m_hSchedCreateBtn = CreateWindowExW(0, L"BUTTON", L"定时关机",
+        WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON | WS_TABSTOP,
+        236, sy + 22, 100, 28, m_hwnd, (HMENU)IDC_SCHED_CREATE, m_hInstance, NULL);
+
+    m_hSchedDeleteBtn = CreateWindowExW(0, L"BUTTON", L"删除定时任务",
+        WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | WS_TABSTOP | WS_DISABLED,
+        345, sy + 22, 100, 28, m_hwnd, (HMENU)IDC_SCHED_DELETE, m_hInstance, NULL);
+
+    m_hSchedHint = CreateWindowExW(0, L"STATIC", L"今天/明天 --:-- 关机",
+        WS_CHILD | WS_VISIBLE | SS_CENTERIMAGE,
+        20, sy + 55, 425, 20, m_hwnd, (HMENU)IDC_SCHED_HINT, m_hInstance, NULL);
+
+    sy += 95;
+
+    // 当前时间组（对应"倒计时显示"）
+    m_hSchedClockGroup = CreateWindowExW(0, L"BUTTON", L"当前时间",
+        WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
+        10, sy, 465, 65, m_hwnd, (HMENU)IDC_SCHED_CLOCK_GROUP, m_hInstance, NULL);
+
+    m_hSchedClock = CreateWindowExW(0, L"STATIC", L"当前系统时间：--:--:--",
+        WS_CHILD | WS_VISIBLE | SS_CENTER | SS_CENTERIMAGE,
+        20, sy + 20, 440, 35, m_hwnd, (HMENU)IDC_SCHED_CLOCK, m_hInstance, NULL);
+
+    sy += 75;
+
+    // 状态信息组（对应页面1状态信息）
+    m_hSchedStateGroup = CreateWindowExW(0, L"BUTTON", L"状态信息",
+        WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
+        10, sy, 465, 60, m_hwnd, (HMENU)IDC_SCHED_STATE_GROUP, m_hInstance, NULL);
+
+    m_hSchedState = CreateWindowExW(0, L"STATIC",
+        L"当前没有定时关机任务。",
+        WS_CHILD | WS_VISIBLE | SS_LEFT,
+        20, sy + 15, 440, 38, m_hwnd, (HMENU)IDC_SCHED_STATE, m_hInstance, NULL);
+
+    // ====== 字体 ======
+    setControlFont(m_hTab, 11, true);
     setControlFont(m_hCountdownLabel, 20, true);
     setControlFont(m_hStatusLabel, 10);
     setControlFont(m_hCountdownEdit, 12, true);
     setControlFont(m_hSetButton, 10, true);
     setControlFont(m_hCancelButton, 10, true);
+    setControlFont(m_hSecondsHint, 9);
     setControlFont(m_hQuick10s, 10);
     setControlFont(m_hQuick30s, 10);
     setControlFont(m_hQuick1m, 10);
@@ -541,6 +773,19 @@ void MainWindow::createControls() {
     setControlFont(m_hQuick1h, 10);
     setControlFont(m_hQuick2h, 10);
     setControlFont(m_hQuick4h, 10);
+    setControlFont(m_hSchedClock, 18, true);
+    setControlFont(m_hSchedTimeLabel, 11);
+    setControlFont(m_hSchedHourEdit, 13, true);
+    setControlFont(m_hSchedColon, 12, true);
+    setControlFont(m_hSchedMinEdit, 13, true);
+    setControlFont(m_hSchedCreateBtn, 10, true);
+    setControlFont(m_hSchedDeleteBtn, 10, true);
+    setControlFont(m_hSchedHint, 9);
+    setControlFont(m_hSchedState, 10);
+
+    updateSecondsHint();
+    updateSchedClock();
+    updateSchedStateText();
 }
 
 void MainWindow::setControlFont(HWND hwnd, int size, bool bold) {
@@ -588,8 +833,53 @@ void MainWindow::updateStatus() {
     BOOL hasTask = m_timerManager->hasPendingTask() ? TRUE : FALSE;
     EnableWindow(m_hCancelButton, hasTask);
 
-    std::wstring title = L"AutoPower - 定时关机";
-    if (m_timerManager->hasPendingTask()) title += L" - 关机已设置";
+    updateInterlock();
+    updateTitle();
+}
+
+// 互斥：倒计时与定时关机同时只能存在一个，激活一方时禁用另一方的设置控件
+void MainWindow::updateInterlock() {
+    bool countdownActive = m_timerManager && m_timerManager->hasPendingTask();
+
+    // 定时关机激活时 → 禁用倒计时设置控件（保留取消按钮）
+    BOOL countdownEnabled = m_schedActive ? FALSE : TRUE;
+    if (m_hCountdownEdit) EnableWindow(m_hCountdownEdit, countdownEnabled);
+    if (m_hUnitCombo) EnableWindow(m_hUnitCombo, countdownEnabled);
+    if (m_hSetButton) EnableWindow(m_hSetButton, countdownEnabled);
+    HWND quickBtns[] = { m_hQuick10s, m_hQuick30s, m_hQuick1m, m_hQuick5m,
+                         m_hQuick10m, m_hQuick15m, m_hQuick30m, m_hQuick1h,
+                         m_hQuick2h, m_hQuick4h };
+    for (HWND b : quickBtns) if (b) EnableWindow(b, countdownEnabled);
+
+    // 倒计时激活时 → 禁用定时关机设置控件（保留删除按钮）
+    if (m_hSchedCreateBtn) {
+        BOOL schedEnabled = countdownActive ? FALSE : TRUE;
+        EnableWindow(m_hSchedHourEdit, schedEnabled);
+        EnableWindow(m_hSchedMinEdit, schedEnabled);
+        EnableWindow(m_hSchedCreateBtn, schedEnabled);
+    }
+}
+
+// 标题栏实时显示：无任务 / 倒计时关机-XX后关机 / 定时关机-XX:XX关机
+void MainWindow::updateTitle() {
+    std::wstring title = L"AutoPower - ";
+    bool hasCountdown = m_timerManager && m_timerManager->hasPendingTask();
+
+    if (hasCountdown) {
+        int sec = m_timerManager->getRemainingSeconds();
+        if (sec < 0) sec = 0;
+        wchar_t buf[32];
+        if (sec < 60)
+            swprintf_s(buf, L"倒计时关机-%d秒后关机", sec);
+        else
+            swprintf_s(buf, L"倒计时关机-%d分钟后关机", (sec + 59) / 60);
+        title += buf;
+    } else if (m_schedActive) {
+        title += L"定时关机-";
+        title += m_schedHHMM.empty() ? L"任务已创建" : (m_schedHHMM + L"关机");
+    } else {
+        title += L"无任务";
+    }
     SetWindowTextW(m_hwnd, title.c_str());
 }
 
@@ -605,6 +895,7 @@ void MainWindow::onSetShutdown() {
     }
     if (m_timerManager->setShutdownTimer(totalSeconds)) {
         std::wstring msg = L"关机已设置，" + m_timerManager->getCountdownDisplayW();
+        msg += L"\n\n关机命令: shutdown -s -t " + std::to_wstring(totalSeconds) + L"\n关闭软件不影响关机，可用 shutdown -a 取消。";
         MessageBoxW(m_hwnd, msg.c_str(), L"设置成功", MB_OK | MB_ICONINFORMATION);
         updateStatus();
     }
@@ -619,6 +910,29 @@ void MainWindow::onCancelShutdown() {
     }
 }
 
+void MainWindow::updateSecondsHint() {
+    int totalSeconds = getInputSeconds();
+    if (totalSeconds <= 0) {
+        SetWindowTextW(m_hSecondsHint, L"请输入有效时间");
+        return;
+    }
+    std::wstring hint = L"= " + std::to_wstring(totalSeconds) + L" 秒";
+    if (totalSeconds >= 3600) {
+        int h = totalSeconds / 3600;
+        int m = (totalSeconds % 3600) / 60;
+        int s = totalSeconds % 60;
+        hint += L"  (" + std::to_wstring(h) + L"小时" 
+            + (m > 0 ? std::to_wstring(m) + L"分" : L"")
+            + (s > 0 ? std::to_wstring(s) + L"秒" : L"") + L")";
+    } else if (totalSeconds >= 60) {
+        int m = totalSeconds / 60;
+        int s = totalSeconds % 60;
+        hint += L"  (" + std::to_wstring(m) + L"分"
+            + (s > 0 ? std::to_wstring(s) + L"秒" : L"") + L")";
+    }
+    SetWindowTextW(m_hSecondsHint, hint.c_str());
+}
+
 void MainWindow::onQuickSet(int seconds) {
     if (m_timerManager->setShutdownTimer(seconds)) {
         std::wstring msg;
@@ -629,6 +943,7 @@ void MainWindow::onQuickSet(int seconds) {
         } else {
             msg = std::to_wstring(seconds / 60) + L"分钟后关机";
         }
+        msg += L"\n\n关机命令: shutdown -s -t " + std::to_wstring(seconds) + L"\n关闭软件不影响关机，可用 shutdown -a 取消。";
         MessageBoxW(m_hwnd, msg.c_str(), L"设置成功", MB_OK | MB_ICONINFORMATION);
         updateStatus();
     }
@@ -657,9 +972,33 @@ LRESULT MainWindow::handleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
         case WM_TIMER:
             if (wParam == 1) {
                 updateCountdown();
+                updateTitle();
                 if (m_timerManager && m_timerManager->hasPendingTask()) {
                     if (m_timerManager->getRemainingSeconds() == 300 && !m_reminderShown) {
                         showReminder();
+                    }
+                }
+
+                // 页面2：实时时钟
+                updateSchedClock();
+
+                // 定时关机兜底触发：软件运行时到达目标时刻则确保执行关机
+                if (m_schedActive && !m_schedHHMM.empty() &&
+                    m_schedTarget.dwHighDateTime != 0) {
+                    long long rem = DiffSecondsFromNow(m_schedTarget);
+                    // 每分钟刷新一次状态文本中的剩余时间
+                    static int s_lastMin = -1;
+                    SYSTEMTIME stN; GetLocalTime(&stN);
+                    if (s_lastMin != stN.wMinute) {
+                        s_lastMin = stN.wMinute;
+                        updateSchedStateText();
+                    }
+                    if (rem <= 0) {
+                        ShellExecuteW(NULL, L"open", L"shutdown.exe",
+                            L"-s -t 0", NULL, SW_HIDE);
+                        m_schedActive = false;
+                        ZeroMemory(&m_schedTarget, sizeof(m_schedTarget));
+                        updateSchedStateText();
                     }
                 }
             }
@@ -668,6 +1007,16 @@ LRESULT MainWindow::handleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
         case WM_COMMAND:
             handleCommand(wParam);
             return 0;
+
+        case WM_NOTIFY: {
+            NMHDR* nmh = (NMHDR*)lParam;
+            if (nmh && nmh->hwndFrom == m_hTab &&
+                nmh->idFrom == IDC_PAGE_TAB && nmh->code == TCN_SELCHANGE) {
+                int idx = (int)SendMessageW(m_hTab, TCM_GETCURSEL, 0, 0);
+                applyPage(idx);
+            }
+            return 0;
+        }
 
         case WM_SHOW_ERROR: {
             std::wstring* pMsg = reinterpret_cast<std::wstring*>(wParam);
@@ -690,6 +1039,22 @@ LRESULT MainWindow::handleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
                     SetTextColor(hdc, RGB(200, 100, 0));
                 } else {
                     SetTextColor(hdc, RGB(128, 128, 128));
+                }
+                SetBkColor(hdc, RGB(255, 255, 255));
+                return (LRESULT)GetStockObject(WHITE_BRUSH);
+            }
+            if (hCtrl == m_hSchedState) {
+                wchar_t text[512] = {};
+                GetWindowTextW(hCtrl, text, 512);
+                std::wstring ws(text);
+                if (ws.find(L"失败") != std::wstring::npos ||
+                    ws.find(L"错误") != std::wstring::npos) {
+                    SetTextColor(hdc, RGB(192, 0, 0));      // 失败/错误 -> 红色
+                } else if (ws.find(L"已创建") != std::wstring::npos ||
+                           ws.find(L"已成功") != std::wstring::npos) {
+                    SetTextColor(hdc, RGB(0, 128, 0));      // 任务存在 -> 绿色
+                } else {
+                    SetTextColor(hdc, RGB(100, 100, 100));  // 无任务 -> 灰色
                 }
                 SetBkColor(hdc, RGB(255, 255, 255));
                 return (LRESULT)GetStockObject(WHITE_BRUSH);
@@ -744,9 +1109,15 @@ void MainWindow::handleCommand(WPARAM wParam) {
         if (newVal <= 0) newVal = 1;
 
         wchar_t newBuf[32];
-        _itow_s(newVal, newBuf, 10);
+        _itow(newVal, newBuf, 10);
         SetWindowTextW(m_hCountdownEdit, newBuf);
         lastUnit = curUnit;
+        updateSecondsHint();
+        return;
+    }
+
+    if (notif == EN_CHANGE && id == IDC_COUNTDOWN_EDIT) {
+        updateSecondsHint();
         return;
     }
 
@@ -765,7 +1136,217 @@ void MainWindow::handleCommand(WPARAM wParam) {
         case IDC_QUICK_1H:      onQuickSet(3600); break;
         case IDC_QUICK_2H:      onQuickSet(7200); break;
         case IDC_QUICK_4H:      onQuickSet(14400); break;
+        case IDC_SCHED_CREATE:  onCreateSchedule(); break;
+        case IDC_SCHED_DELETE:  onDeleteSchedule(); break;
     }
+}
+
+// ==================== 标签页与定时关机 ====================
+void MainWindow::applyPage(int index) {
+    const HWND page1[] = {
+        m_hInputGroupBox, m_hTimeStatic, m_hCountdownEdit,
+        m_hUnitCombo, m_hSetButton, m_hCancelButton, m_hSecondsHint,
+        m_hCountdownGroupBox, m_hCountdownLabel,
+        m_hQuickGroupBox,
+        m_hQuick10s, m_hQuick30s, m_hQuick1m, m_hQuick5m, m_hQuick10m,
+        m_hQuick15m, m_hQuick30m, m_hQuick1h, m_hQuick2h, m_hQuick4h,
+        m_hStatusGroupBox, m_hStatusLabel
+    };
+    const HWND page2[] = {
+        m_hSchedGroupBox,
+        m_hSchedClock,
+        m_hSchedTimeLabel, m_hSchedHourEdit, m_hSchedColon, m_hSchedMinEdit,
+        m_hSchedCreateBtn, m_hSchedDeleteBtn, m_hSchedState, m_hSchedHint,
+        m_hSchedClockGroup, m_hSchedStateGroup
+    };
+
+    int show1 = (index == 0) ? SW_SHOW : SW_HIDE;
+    int show2 = (index == 1) ? SW_SHOW : SW_HIDE;
+    for (HWND h : page1) if (h) ShowWindow(h, show1);
+    for (HWND h : page2) if (h) ShowWindow(h, show2);
+
+    // 标题随页面切换
+    updateTitle();
+}
+
+void MainWindow::onCreateSchedule() {
+    // 从页面输入框读取时间（格式校验）
+    wchar_t hb[8] = {}, mb[8] = {};
+    GetWindowTextW(m_hSchedHourEdit, hb, 8);
+    GetWindowTextW(m_hSchedMinEdit, mb, 8);
+    int hour, minute;
+    try { hour = std::stoi(hb); minute = std::stoi(mb); }
+    catch (...) {
+        showError(L"时间无效！请输入数字，小时范围 0-23，分钟范围 0-59。");
+        return;
+    }
+    if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+        showError(L"时间超出范围！小时应为 0-23，分钟应为 0-59。");
+        return;
+    }
+
+    wchar_t tbuf[8];
+    swprintf_s(tbuf, L"%02d:%02d", hour, minute);
+    std::wstring hhmm = tbuf;
+
+    // 再次解析为目标时刻（当天已过则取明天，双保险）
+    FILETIME target;
+    if (!ParseHHMMToTarget(hhmm, target)) {
+        showError(L"时间无效！小时范围 0-23，分钟范围 0-59。");
+        return;
+    }
+
+    // 同名任务已存在时询问是否覆盖
+    if (SchTaskExists()) {
+        int r = MessageBoxW(m_hwnd,
+            L"系统任务计划程序中已存在名为“关机”的任务。\n是否删除旧任务并创建新的？",
+            L"任务已存在", MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2);
+        if (r != IDYES) return;
+        if (!DeleteShutdownTask(m_hwnd)) {
+            showError(L"无法删除旧的“关机”任务，未创建新任务。\n"
+                      L"请以管理员身份运行本软件后重试。");
+            return;
+        }
+    }
+
+    std::wstring args = std::wstring(L"/create /tn ") + SCHED_TASK_NAME +
+                        L" /tr \"shutdown /s\" /sc once /st " + hhmm;
+
+    bool ok = RunSchtasks(args) && g_lastSchExit == 0;
+
+    // 权限不足兜底：询问是否提权重试
+    if (!ok) {
+        wchar_t codeBuf[32];
+        swprintf_s(codeBuf, L"%d", g_lastSchExit);
+        int r = MessageBoxW(m_hwnd,
+            ((std::wstring)L"创建定时关机任务失败（错误代码 " + codeBuf +
+             L"）。\n可能需要管理员权限，是否以管理员身份重试？").c_str(),
+            L"权限不足", MB_YESNO | MB_ICONWARNING);
+        if (r == IDYES) ok = ElevatedRunSchtasks(args);
+    }
+
+    if (!ok) {
+        showError(L"定时关机任务创建失败！\n"
+                  L"请检查：1) 是否拒绝了管理员授权；\n"
+                  L"      2) schtasks.exe 是否可用；\n"
+                  L"      3) 以管理员身份运行本软件后重试。");
+        return;
+    }
+
+    m_schedTarget = target;
+    m_schedHHMM = hhmm;
+    m_schedActive = true;
+    updateSchedStateText();
+
+    // 成功反馈：说明当天/明天执行
+    SYSTEMTIME stT;
+    FileTimeToSystemTime(&target, &stT);
+    SYSTEMTIME stN; GetLocalTime(&stN);
+    bool tomorrow = (stT.wDay != stN.wDay || stT.wMonth != stN.wMonth);
+    std::wstring info = L"定时关机任务已成功创建！\n\n关机时刻：" + hhmm +
+        (tomorrow ? L"（明天）" : L"（今天）") +
+        L"\n到达该时刻时系统将自动关机。\n"
+        L"关闭本软件不影响该任务的执行。";
+    MessageBoxW(m_hwnd, info.c_str(), L"操作成功", MB_OK | MB_ICONINFORMATION);
+}
+
+void MainWindow::onDeleteSchedule() {
+    if (!SchTaskExists()) {
+        m_schedActive = false;
+        m_schedHHMM.clear();
+        ZeroMemory(&m_schedTarget, sizeof(m_schedTarget));
+        updateSchedStateText();
+        MessageBoxW(m_hwnd,
+            L"系统中当前不存在“关机”计划任务。",
+            L"提示", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+
+    int r = MessageBoxW(m_hwnd,
+        L"确定要删除系统“任务计划程序”中的“关机”任务吗？\n删除后将不再自动关机。",
+        L"删除定时关机任务", MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2);
+    if (r != IDYES) return;
+
+    if (!DeleteShutdownTask(m_hwnd)) {
+        showError(L"删除失败！无法从系统任务计划程序中移除“关机”任务。\n"
+                  L"可能原因：权限不足或用户拒绝管理员授权。");
+        return;
+    }
+
+    m_schedActive = false;
+    m_schedHHMM.clear();
+    ZeroMemory(&m_schedTarget, sizeof(m_schedTarget));
+    updateSchedStateText();
+    MessageBoxW(m_hwnd,
+        L"“关机”计划任务已成功删除，定时关机已取消。",
+        L"操作成功", MB_OK | MB_ICONINFORMATION);
+}
+
+void MainWindow::updateSchedStateText() {
+    if (!m_hSchedState) return;
+
+    std::wstring text;
+    if (m_schedActive) {
+        if (!m_schedHHMM.empty()) {
+            long long rem = DiffSecondsFromNow(m_schedTarget);
+            text = L"已创建：" + m_schedHHMM + L" 关机";
+            if (rem > 0) text += L"，剩余约 " + FormatRemaining(rem);
+            text += L"。";
+            text += L"\n点击「删除定时任务」可移除该计划。";
+        } else {
+            text = L"检测到系统中已存在“关机”计划任务（软件启动时发现）。\n"
+                   L"具体时间请在 Windows 任务计划程序中查看。";
+        }
+    } else {
+        text = L"当前没有定时关机任务。\n"
+               L"点击「定时关机」按钮设置今天或明天的时间并创建任务。";
+    }
+    SetWindowTextW(m_hSchedState, text.c_str());
+    if (m_hSchedDeleteBtn)
+        EnableWindow(m_hSchedDeleteBtn, m_schedActive ? TRUE : FALSE);
+    updateInterlock();
+    updateTitle();
+}
+
+void MainWindow::updateSchedClock() {
+    if (!m_hSchedClock) return;
+    wchar_t clock[16], buf[40];
+    GetClockString(clock, 16);
+    swprintf_s(buf, L"当前系统时间：%s", clock);
+    SetWindowTextW(m_hSchedClock, buf);
+
+    // 换算提示（对应页面1的"= 1800 秒"）：显示目标时间与今天/明天
+    if (m_hSchedHint) {
+        wchar_t hb[8] = {}, mb[8] = {}, hint[64];
+        GetWindowTextW(m_hSchedHourEdit, hb, 8);
+        GetWindowTextW(m_hSchedMinEdit, mb, 8);
+        int hh = -1, mm = -1;
+        try { hh = std::stoi(hb); mm = std::stoi(mb); } catch (...) {}
+        if (hh >= 0 && hh <= 23 && mm >= 0 && mm <= 59) {
+            SYSTEMTIME st; GetLocalTime(&st);
+            bool tomorrow = (hh * 60 + mm) <= (st.wHour * 60 + st.wMinute);
+            swprintf_s(hint, L"%s %02d:%02d 关机",
+                       tomorrow ? L"明天" : L"今天", hh, mm);
+        } else {
+            swprintf_s(hint, L"请输入有效时间（小时 0-23，分钟 0-59）");
+        }
+        SetWindowTextW(m_hSchedHint, hint);
+    }
+}
+
+// 启动时检测系统中是否已存在「关机」计划任务并同步界面状态
+void MainWindow::syncSchedFromSystem() {
+    bool exists = SchTaskExists();
+    if (exists) {
+        if (!m_schedActive || m_schedHHMM.empty()) {
+            m_schedActive = true;   // 时间未知 -> 状态文本按“已有任务(未知时间)”显示
+        }
+    } else {
+        m_schedActive = false;
+        m_schedHHMM.clear();
+        ZeroMemory(&m_schedTarget, sizeof(m_schedTarget));
+    }
+    updateSchedStateText();
 }
 
 LRESULT CALLBACK MainWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {

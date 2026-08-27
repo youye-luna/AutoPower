@@ -2,19 +2,39 @@
 
 一款基于 Win32 API 开发的 Windows 定时关机软件，纯 C++ 实现，无第三方依赖。
 
+## 软件截图
+
+<img width="486" height="493" alt="倒计时关机" src="https://github.com/user-attachments/assets/b7a03326-2a30-4f31-a9d5-a85fa257da46" />
+<img width="1720" height="952" alt="软件截图2" src="https://github.com/user-attachments/assets/ce9f5208-b528-474a-a253-7dbeabc91dbb" />
+<img width="1720" height="952" alt="软件截图3" src="https://github.com/user-attachments/assets/93f7ec4a-6704-4bba-b421-817b292c6d49" />
+
 ## 功能特性
 
+### 倒计时关机
 - 倒计时关机设置（支持秒、分钟、小时单位切换）
 - 快速设置按钮：10秒 / 30秒 / 1分钟 / 5分钟 / 10分钟 / 15分钟 / 30分钟 / 1小时 / 2小时 / 4小时
-- 实时倒计时显示
-- 关机前5分钟提醒窗口
-- 支持取消已设置的关机任务
-- 单位切换时数值自动换算
+- 实时倒计时显示，剩余时间实时更新
+- 关机前5分钟弹窗提醒，可一键取消
+- 使用 `shutdown -s -t` 系统命令关机，关闭软件不影响关机
+
+### 定时关机
+- 支持输入 HH:MM 设置定时关机时间（自动判断今天/明天）
+- 使用 `schtasks` 创建系统计划任务，关闭软件不影响执行
+- 可查看任务状态、剩余时间，支持一键删除已创建的任务
+- 权限不足时自动尝试 UAC 提权
+- 定时与倒计时互锁，避免冲突
+
+### 通用
+- 标题栏实时显示当前任务状态
+- 双标签页界面，清晰分区
+- 完善的错误处理与用户反馈
+- 单文件 exe，`/MT` 静态链接，无 DLL 依赖
+- 支持 Windows 7 SP1 及以上
 
 ## 系统要求
 
 - Windows 7 SP1 及以上（32位/64位）
-- Visual Studio 2015+ 或任意支持 C++11 的 MSVC 编译器
+- Visual Studio 2015+ 或任意支持 C++14 的 MSVC 编译器
 - Windows SDK
 
 ## 项目结构
@@ -25,16 +45,8 @@ AutoPower/
 ├── resources/
 │   ├── app_icon.ico        # 应用图标
 │   └── app_icon.rc         # 资源文件
-├── AutoPower.png           # 图标原图
-└── docs/
-    ├── build.md            # 编译说明
-    └── user_manual.md      # 用户手册
+└── .gitignore
 ```
-## 软件截图
-<img width="486" height="493" alt="图片" src="https://github.com/user-attachments/assets/b7a03326-2a30-4f31-a9d5-a85fa257da46" />
-<img width="1720" height="952" alt="图片" src="https://github.com/user-attachments/assets/ce9f5208-b528-474a-a253-7dbeabc91dbb" />
-<img width="1720" height="952" alt="图片" src="https://github.com/user-attachments/assets/93f7ec4a-6704-4bba-b421-817b292c6d49" />
-
 
 ## 编译方法
 
@@ -53,3 +65,6 @@ link /SUBSYSTEM:WINDOWS /OUT:AutoPower.exe AutoPower.obj app_icon.res user32.lib
 
 编译完成后得到单个 `AutoPower.exe`，无需任何 DLL，直接双击运行。
 
+## 许可证
+
+[Apache License 2.0](LICENSE)
