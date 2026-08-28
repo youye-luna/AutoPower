@@ -76,6 +76,22 @@ link /SUBSYSTEM:WINDOWS /OUT:AutoPower.exe AutoPower.obj app_icon.res user32.lib
 
 编译完成后得到单个 `AutoPower.exe`，无需任何 DLL，直接双击运行。
 
-## 许可证
 
-[Apache License 2.0](LICENSE)
+<br>
+<br>
+<br>
+<br>
+<br>
+<br>
+<br>
+<br>
+<br>
+<br>
+<br>
+<br>
+<br>
+<br>
+## 求赞助
+给点吧，求求了，有点用不起AI了
+
+<img width="500" height="500" alt="3269a2a7a10c377704db23f933f21ef7" src="https://github.com/user-attachments/assets/2c5fff8f-13f9-46a9-bd44-a8649324d2f3" />
