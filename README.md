@@ -76,6 +76,9 @@ link /SUBSYSTEM:WINDOWS /OUT:AutoPower.exe AutoPower.obj app_icon.res user32.lib
 
 编译完成后得到单个 `AutoPower.exe`，无需任何 DLL，直接双击运行。
 
+## 许可证
+
+本软件使用MPL 2.0开源协议
 
 <br>
 <br>
@@ -91,6 +94,7 @@ link /SUBSYSTEM:WINDOWS /OUT:AutoPower.exe AutoPower.obj app_icon.res user32.lib
 <br>
 <br>
 <br>
+
 ## 求赞助
 给点吧，求求了，有点用不起AI了
 
