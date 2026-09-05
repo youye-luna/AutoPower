@@ -1,4 +1,4 @@
-# AutoPower - 定时关机软件
+# <img src="AutoPower.png" width="32" height="32" alt="AutoPower Logo"> AutoPower - 定时关机软件
 
 一款基于 Win32 API 开发的 Windows 定时关机软件，纯 C++ 实现，无第三方依赖。
 
