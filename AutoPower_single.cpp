@@ -8,6 +8,8 @@
 #include <windows.h>
 #include <shellapi.h>
 #include <commctrl.h>
+#include <objidl.h>
+#include <gdiplus.h>
 #include <string>
 #include <sstream>
 #include <vector>
@@ -20,9 +22,12 @@
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "ole32.lib")
+#pragma comment(lib, "gdiplus.lib")
 
 // ==================== 资源ID ====================
 #define IDI_APP_ICON           2001
+#define IDB_LOGO_PNG           2002
 
 // ==================== 控件ID ====================
 #define IDC_COUNTDOWN_EDIT     1001
@@ -58,9 +63,55 @@
 #define IDC_SCHED_GROUP       1045
 #define IDC_SCHED_CLOCK_GROUP 1046
 #define IDC_SCHED_STATE_GROUP 1048
+#define IDC_ABOUT_LOGO        1049
+#define IDC_ABOUT_TITLE       1050
+#define IDC_ABOUT_VERSION     1051
+#define IDC_ABOUT_DESC        1052
+#define IDC_ABOUT_LINK        1053
+#define IDC_ABOUT_LICENSE     1054
+#define IDC_ABOUT_COPYRIGHT   1055
+#define IDC_ABOUT_DESC2       1056
+
+// ==================== 关于页面常量 ====================
+#define APP_VERSION           L"1.0.2"
+#define GITHUB_URL            L"https://github.com/youye-luna/AutoPower"
 
 // ==================== 定时关机任务常量 ====================
 #define SCHED_TASK_NAME       L"\"关机\""
+
+// ==================== 关于页面 Logo ====================
+static Gdiplus::Bitmap* g_pLogoBmp = NULL;
+
+// 从资源中的 PNG (RCDATA) 加载 GDI+ 位图
+static Gdiplus::Bitmap* LoadPngFromResource(HINSTANCE hInst, UINT resId) {
+    HRSRC hRes = FindResourceW(hInst, MAKEINTRESOURCEW(resId), RT_RCDATA);
+    if (!hRes) return NULL;
+    HGLOBAL hMem = LoadResource(hInst, hRes);
+    if (!hMem) return NULL;
+    const void* pData = LockResource(hMem);
+    DWORD size = SizeofResource(hInst, hRes);
+    if (!pData || !size) return NULL;
+
+    HGLOBAL hBuf = GlobalAlloc(GMEM_MOVEABLE, size);
+    if (!hBuf) return NULL;
+    void* pBuf = GlobalLock(hBuf);
+    if (!pBuf) { GlobalFree(hBuf); return NULL; }
+    memcpy(pBuf, pData, size);
+    GlobalUnlock(hBuf);
+
+    IStream* pStream = NULL;
+    if (FAILED(CreateStreamOnHGlobal(hBuf, TRUE, &pStream))) {
+        GlobalFree(hBuf);
+        return NULL;
+    }
+    Gdiplus::Bitmap* pTmp = Gdiplus::Bitmap::FromStream(pStream);
+    Gdiplus::Bitmap* pClone = pTmp ?
+        pTmp->Clone(0, 0, (INT)pTmp->GetWidth(), (INT)pTmp->GetHeight(),
+                    PixelFormat32bppARGB) : NULL;
+    delete pTmp;
+    pStream->Release();   // fDeleteOnRelease=TRUE，同时释放 hBuf
+    return pClone;
+}
 
 // ==================== 自定义消息 ====================
 #define WM_UPDATE_COUNTDOWN    WM_USER + 1
@@ -466,6 +517,9 @@ private:
     HWND m_hSchedTimeLabel, m_hSchedHourEdit, m_hSchedColon, m_hSchedMinEdit;
     HWND m_hSchedHint;
     HWND m_hSchedGroupBox, m_hSchedClockGroup, m_hSchedStateGroup;
+    // 页面3：关于
+    HWND m_hAboutLogo, m_hAboutTitle, m_hAboutVersion, m_hAboutDesc;
+    HWND m_hAboutDesc2, m_hAboutLink, m_hAboutLicense, m_hAboutCopyright;
     bool m_schedActive;
     std::wstring m_schedHHMM;
     FILETIME m_schedTarget;
@@ -478,6 +532,7 @@ private:
     void setControlFont(HWND hwnd, int size, bool bold = false);
     void updateCountdown();
     void updateStatus();
+    std::wstring getGlobalStatusText();
     void updateTitle();
     void updateInterlock();
     void onSetShutdown();
@@ -518,6 +573,8 @@ MainWindow::MainWindow(HINSTANCE hInstance)
     , m_hSchedTimeLabel(NULL), m_hSchedHourEdit(NULL), m_hSchedColon(NULL), m_hSchedMinEdit(NULL)
     , m_hSchedHint(NULL)
     , m_hSchedGroupBox(NULL), m_hSchedClockGroup(NULL), m_hSchedStateGroup(NULL)
+    , m_hAboutLogo(NULL), m_hAboutTitle(NULL), m_hAboutVersion(NULL), m_hAboutDesc(NULL)
+    , m_hAboutDesc2(NULL), m_hAboutLink(NULL), m_hAboutLicense(NULL), m_hAboutCopyright(NULL)
     , m_schedActive(false)
     , m_timerManager(NULL), m_uiTimer(0), m_reminderShown(false) {
     ZeroMemory(&m_schedTarget, sizeof(m_schedTarget));
@@ -527,6 +584,7 @@ MainWindow::MainWindow(HINSTANCE hInstance)
 MainWindow::~MainWindow() {
     if (m_uiTimer) KillTimer(m_hwnd, m_uiTimer);
     if (m_timerManager) delete m_timerManager;
+    delete g_pLogoBmp; g_pLogoBmp = NULL;
     g_pMainWindow = NULL;
 }
 
@@ -583,6 +641,8 @@ void MainWindow::createControls() {
     SendMessageW(m_hTab, TCM_INSERTITEMW, 0, (LPARAM)&tie);
     tie.pszText = (LPWSTR)L"定时关机";
     SendMessageW(m_hTab, TCM_INSERTITEMW, 1, (LPARAM)&tie);
+    tie.pszText = (LPWSTR)L"关于";
+    SendMessageW(m_hTab, TCM_INSERTITEMW, 2, (LPARAM)&tie);
 
     int y = 44;
 
@@ -680,12 +740,12 @@ void MainWindow::createControls() {
 
     m_hStatusGroupBox = CreateWindowExW(0, L"BUTTON", L"状态信息",
         WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
-        10, y, 465, 50, m_hwnd, (HMENU)IDC_STATUS_GROUP, m_hInstance, NULL);
+        10, y, 465, 60, m_hwnd, (HMENU)IDC_STATUS_GROUP, m_hInstance, NULL);
 
     m_hStatusLabel = CreateWindowExW(0, L"STATIC",
-        L"没有待处理的关机任务",
-        WS_CHILD | WS_VISIBLE | SS_LEFT | SS_CENTERIMAGE,
-        20, y + 18, 440, 25, m_hwnd, (HMENU)IDC_STATUS_LABEL, m_hInstance, NULL);
+        L"没有待处理的关机任务。\n可设置倒计时关机或定时关机。",
+        WS_CHILD | WS_VISIBLE | SS_LEFT,
+        20, y + 15, 440, 38, m_hwnd, (HMENU)IDC_STATUS_LABEL, m_hInstance, NULL);
 
     // ====== 页面2：定时关机（布局与页面1一致） ======
     int sy = 44;
@@ -755,6 +815,52 @@ void MainWindow::createControls() {
         WS_CHILD | WS_VISIBLE | SS_LEFT,
         20, sy + 15, 440, 38, m_hwnd, (HMENU)IDC_SCHED_STATE, m_hInstance, NULL);
 
+    // ====== 页面3：关于 ======
+    g_pLogoBmp = LoadPngFromResource(m_hInstance, IDB_LOGO_PNG);
+
+    // 内容块在标签页内纵向居中
+    int ay = 112;
+
+    // Logo（自绘 STATIC，85x85，与标题组合整体居中）
+    m_hAboutLogo = CreateWindowExW(0, L"STATIC", L"",
+        WS_CHILD | WS_VISIBLE | SS_OWNERDRAW,
+        110, ay, 85, 85, m_hwnd, (HMENU)IDC_ABOUT_LOGO, m_hInstance, NULL);
+
+    // 标题 + 版本（Logo 右侧横向排布，组合块垂直居中）
+    m_hAboutTitle = CreateWindowExW(0, L"STATIC", L"AutoPower",
+        WS_CHILD | WS_VISIBLE | SS_LEFT | SS_CENTERIMAGE,
+        205, ay + 10, 170, 36, m_hwnd, (HMENU)IDC_ABOUT_TITLE, m_hInstance, NULL);
+
+    m_hAboutVersion = CreateWindowExW(0, L"STATIC", L"版本 " APP_VERSION,
+        WS_CHILD | WS_VISIBLE | SS_LEFT | SS_CENTERIMAGE,
+        205, ay + 52, 170, 22, m_hwnd, (HMENU)IDC_ABOUT_VERSION, m_hInstance, NULL);
+
+    // 简介（两排居中显示）
+    m_hAboutDesc = CreateWindowExW(0, L"STATIC",
+        L"基于 Win32 API 的 Windows 定时关机软件",
+        WS_CHILD | WS_VISIBLE | SS_CENTER | SS_CENTERIMAGE,
+        10, ay + 96, 465, 22, m_hwnd, (HMENU)IDC_ABOUT_DESC, m_hInstance, NULL);
+
+    m_hAboutDesc2 = CreateWindowExW(0, L"STATIC",
+        L"纯 C++ 实现，无第三方依赖。",
+        WS_CHILD | WS_VISIBLE | SS_CENTER | SS_CENTERIMAGE,
+        10, ay + 122, 465, 22, m_hwnd, (HMENU)IDC_ABOUT_DESC2, m_hInstance, NULL);
+
+    m_hAboutLicense = CreateWindowExW(0, L"STATIC",
+        L"开源协议：Mozilla Public License 2.0",
+        WS_CHILD | WS_VISIBLE | SS_CENTER | SS_CENTERIMAGE,
+        10, ay + 156, 465, 22, m_hwnd, (HMENU)IDC_ABOUT_LICENSE, m_hInstance, NULL);
+
+    m_hAboutCopyright = CreateWindowExW(0, L"STATIC",
+        L"Copyright (c) 2026 youye-luna",
+        WS_CHILD | WS_VISIBLE | SS_CENTER | SS_CENTERIMAGE,
+        10, ay + 182, 465, 22, m_hwnd, (HMENU)IDC_ABOUT_COPYRIGHT, m_hInstance, NULL);
+
+    // GitHub 按钮（放在所有文字最下面，点击打开仓库主页）
+    m_hAboutLink = CreateWindowExW(0, L"BUTTON", L"GitHub 仓库",
+        WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | WS_TABSTOP,
+        162, ay + 212, 160, 32, m_hwnd, (HMENU)IDC_ABOUT_LINK, m_hInstance, NULL);
+
     // ====== 字体 ======
     setControlFont(m_hTab, 11, true);
     setControlFont(m_hCountdownLabel, 20, true);
@@ -782,6 +888,13 @@ void MainWindow::createControls() {
     setControlFont(m_hSchedDeleteBtn, 10, true);
     setControlFont(m_hSchedHint, 9);
     setControlFont(m_hSchedState, 10);
+    setControlFont(m_hAboutTitle, 20, true);
+    setControlFont(m_hAboutVersion, 10);
+    setControlFont(m_hAboutDesc, 10);
+    setControlFont(m_hAboutDesc2, 10);
+    setControlFont(m_hAboutLink, 10, true);
+    setControlFont(m_hAboutLicense, 10);
+    setControlFont(m_hAboutCopyright, 9);
 
     updateSecondsHint();
     updateSchedClock();
@@ -825,16 +938,32 @@ void MainWindow::updateCountdown() {
     SetWindowTextW(m_hCountdownLabel, countdown.c_str());
 }
 
+// 全局任务状态主文本：倒计时 / 定时 同时只有一个，两页状态信息共用
+std::wstring MainWindow::getGlobalStatusText() {
+    bool hasCountdown = m_timerManager && m_timerManager->hasPendingTask();
+    if (hasCountdown) {
+        int sec = m_timerManager->getRemainingSeconds();
+        if (sec < 0) sec = 0;
+        wchar_t buf[32];
+        if (sec < 60)
+            swprintf_s(buf, L"倒计时关机：%d秒后关机", sec);
+        else
+            swprintf_s(buf, L"倒计时关机：%d分钟后关机", (sec + 59) / 60);
+        return std::wstring(buf);
+    }
+    if (m_schedActive) {
+        if (m_schedHHMM.empty()) return L"定时关机：任务已创建";
+        return L"定时关机：" + m_schedHHMM + L" 关机";
+    }
+    return L"没有待处理的关机任务";
+}
+
 void MainWindow::updateStatus() {
     if (!m_timerManager) return;
-    std::wstring status = m_timerManager->getStatusDescriptionW();
-    SetWindowTextW(m_hStatusLabel, status.c_str());
-
     BOOL hasTask = m_timerManager->hasPendingTask() ? TRUE : FALSE;
     EnableWindow(m_hCancelButton, hasTask);
-
-    updateInterlock();
-    updateTitle();
+    // 两页状态框共用同一全局文本，统一样式统一内容
+    updateSchedStateText();
 }
 
 // 互斥：倒计时与定时关机同时只能存在一个，激活一方时禁用另一方的设置控件
@@ -1008,6 +1137,30 @@ LRESULT MainWindow::handleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
             handleCommand(wParam);
             return 0;
 
+        case WM_DRAWITEM: {
+            DRAWITEMSTRUCT* dis = (DRAWITEMSTRUCT*)lParam;
+            if (dis && dis->CtlID == IDC_ABOUT_LOGO) {
+                FillRect(dis->hDC, &dis->rcItem,
+                    (HBRUSH)GetSysColorBrush(COLOR_BTNFACE));
+                if (g_pLogoBmp) {
+                    Gdiplus::Graphics g(dis->hDC);
+                    g.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+                    UINT iw = g_pLogoBmp->GetWidth(), ih = g_pLogoBmp->GetHeight();
+                    if (iw > 0 && ih > 0) {
+                        int dw = dis->rcItem.right - dis->rcItem.left;
+                        int dh = dis->rcItem.bottom - dis->rcItem.top;
+                        double scale = min((double)dw / iw, (double)dh / ih);
+                        int w = (int)(iw * scale), h = (int)(ih * scale);
+                        int x = dis->rcItem.left + (dw - w) / 2;
+                        int y2 = dis->rcItem.top + (dh - h) / 2;
+                        g.DrawImage(g_pLogoBmp, x, y2, w, h);
+                    }
+                }
+                return TRUE;
+            }
+            return 0;
+        }
+
         case WM_NOTIFY: {
             NMHDR* nmh = (NMHDR*)lParam;
             if (nmh && nmh->hwndFrom == m_hTab &&
@@ -1138,6 +1291,9 @@ void MainWindow::handleCommand(WPARAM wParam) {
         case IDC_QUICK_4H:      onQuickSet(14400); break;
         case IDC_SCHED_CREATE:  onCreateSchedule(); break;
         case IDC_SCHED_DELETE:  onDeleteSchedule(); break;
+        case IDC_ABOUT_LINK:
+            ShellExecuteW(NULL, L"open", GITHUB_URL, NULL, NULL, SW_SHOWNORMAL);
+            break;
     }
 }
 
@@ -1159,11 +1315,17 @@ void MainWindow::applyPage(int index) {
         m_hSchedCreateBtn, m_hSchedDeleteBtn, m_hSchedState, m_hSchedHint,
         m_hSchedClockGroup, m_hSchedStateGroup
     };
+    const HWND page3[] = {
+        m_hAboutLogo, m_hAboutTitle, m_hAboutVersion, m_hAboutDesc,
+        m_hAboutDesc2, m_hAboutLink, m_hAboutLicense, m_hAboutCopyright
+    };
 
     int show1 = (index == 0) ? SW_SHOW : SW_HIDE;
     int show2 = (index == 1) ? SW_SHOW : SW_HIDE;
+    int show3 = (index == 2) ? SW_SHOW : SW_HIDE;
     for (HWND h : page1) if (h) ShowWindow(h, show1);
     for (HWND h : page2) if (h) ShowWindow(h, show2);
+    for (HWND h : page3) if (h) ShowWindow(h, show3);
 
     // 标题随页面切换
     updateTitle();
@@ -1286,24 +1448,33 @@ void MainWindow::updateSchedStateText() {
     if (!m_hSchedState) return;
 
     std::wstring text;
+    bool countdownActive = m_timerManager && m_timerManager->hasPendingTask();
     if (m_schedActive) {
         if (!m_schedHHMM.empty()) {
+            text = getGlobalStatusText();
             long long rem = DiffSecondsFromNow(m_schedTarget);
-            text = L"已创建：" + m_schedHHMM + L" 关机";
             if (rem > 0) text += L"，剩余约 " + FormatRemaining(rem);
-            text += L"。";
-            text += L"\n点击「删除定时任务」可移除该计划。";
+            text += L"。\n请到「定时关机」页点击「删除定时任务」移除该计划。";
         } else {
+            // 启动时检测到系统中已有任务但时间未知
             text = L"检测到系统中已存在“关机”计划任务（软件启动时发现）。\n"
                    L"具体时间请在 Windows 任务计划程序中查看。";
         }
+    } else if (countdownActive) {
+        text = getGlobalStatusText() + L"。\n请到「倒计时关机」页点击「取消关机」取消本次关机。";
     } else {
-        text = L"当前没有定时关机任务。\n"
-               L"点击「定时关机」按钮设置今天或明天的时间并创建任务。";
+        text = L"没有待处理的关机任务。\n可设置倒计时关机或定时关机。";
     }
+
+    // 两个状态框统一样式、统一内容
     SetWindowTextW(m_hSchedState, text.c_str());
+    if (m_hStatusLabel)
+        SetWindowTextW(m_hStatusLabel, text.c_str());
+
     if (m_hSchedDeleteBtn)
         EnableWindow(m_hSchedDeleteBtn, m_schedActive ? TRUE : FALSE);
+    if (m_hCancelButton)
+        EnableWindow(m_hCancelButton, countdownActive ? TRUE : FALSE);
     updateInterlock();
     updateTitle();
 }
@@ -1363,9 +1534,15 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLi
     icc.dwICC = ICC_STANDARD_CLASSES;
     InitCommonControlsEx(&icc);
 
+    // GDI+ 初始化（关于页面 Logo 绘制用）
+    Gdiplus::GdiplusStartupInput gdiplusStartupInput;
+    ULONG_PTR gdiplusToken = 0;
+    Gdiplus::GdiplusStartup(&gdiplusToken, &gdiplusStartupInput, NULL);
+
     MainWindow mainWindow(hInstance);
     if (!mainWindow.create()) {
         MessageBoxW(NULL, L"窗口创建失败！", L"AutoPower 错误", MB_ICONERROR);
+        Gdiplus::GdiplusShutdown(gdiplusToken);
         return 1;
     }
 
@@ -1379,5 +1556,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLi
         }
     }
 
+    Gdiplus::GdiplusShutdown(gdiplusToken);
     return (int)msg.wParam;
 }

@@ -2,6 +2,8 @@
 
 一款基于 Win32 API 开发的 Windows 定时关机软件，纯 C++ 实现，无第三方依赖。
 
+> [GitHub 仓库](https://github.com/youye-luna/AutoPower) · [开源协议（MPL 2.0）](LICENSE) · [提交 Issue](https://github.com/youye-luna/AutoPower/issues)
+
 ## 软件截图
 
 <img width="1920" height="1080" alt="2026-08-27_14-03" src="https://github.com/user-attachments/assets/12ad40e8-ec01-4922-ad7d-2222c12bb1ad" />
