@@ -73,7 +73,7 @@
 #define IDC_ABOUT_DESC2       1056
 
 // ==================== 关于页面常量 ====================
-#define APP_VERSION           L"1.0.2"
+#define APP_VERSION           L"1.0.2-1"
 #define GITHUB_URL            L"https://github.com/youye-luna/AutoPower"
 
 // ==================== 定时关机任务常量 ====================

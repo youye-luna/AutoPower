@@ -27,7 +27,8 @@
 
 ### 通用
 - 标题栏实时显示当前任务状态
-- 双标签页界面，清晰分区
+- 三标签页界面（倒计时关机 / 定时关机 / 关于），清晰分区
+- 关于页内嵌 Logo、GitHub 仓库入口与开源协议信息
 - 完善的错误处理与用户反馈
 - 单文件 exe，`/MT` 静态链接，无 DLL 依赖
 - 支持 Windows 7 SP1 及以上
@@ -55,6 +56,7 @@
 ```
 AutoPower/
 ├── AutoPower_single.cpp   # 完整源码（单文件）
+├── AutoPower.png          # Logo（README 与关于页使用）
 ├── resources/
 │   ├── app_icon.ico        # 应用图标
 │   └── app_icon.rc         # 资源文件
@@ -73,7 +75,7 @@ rc resources\app_icon.rc
 cl /utf-8 /EHsc /MT /O2 /DUNICODE /D_UNICODE /DWINVER=0x0601 /D_WIN32_WINNT=0x0601 /DWIN32_LEAN_AND_MEAN /c AutoPower_single.cpp /Fo:AutoPower.obj
 
 # 3. 链接生成 exe
-link /SUBSYSTEM:WINDOWS /OUT:AutoPower.exe AutoPower.obj app_icon.res user32.lib gdi32.lib comctl32.lib advapi32.lib shell32.lib
+link /SUBSYSTEM:WINDOWS /OUT:AutoPower.exe AutoPower.obj resources\app_icon.res user32.lib gdi32.lib comctl32.lib advapi32.lib shell32.lib ole32.lib gdiplus.lib
 ```
 
 编译完成后得到单个 `AutoPower.exe`，无需任何 DLL，直接双击运行。
