@@ -2,7 +2,7 @@
 
 一款基于 Win32 API 开发的 Windows 定时关机软件，纯 C++ 实现，无第三方依赖。
 
-> [GitHub 仓库](https://github.com/youye-luna/AutoPower) · [开源协议（MPL 2.0）](LICENSE) · [提交 Issue](https://github.com/youye-luna/AutoPower/issues)
+> [GitHub 仓库](https://github.com/youye-luna/AutoPower) · [开源协议（MulanPSL v2）](LICENSE) · [提交 Issue](https://github.com/youye-luna/AutoPower/issues)
 
 ## 软件截图
 
@@ -82,7 +82,9 @@ link /SUBSYSTEM:WINDOWS /OUT:AutoPower.exe AutoPower.obj resources\app_icon.res 
 
 ## 许可证
 
-本软件使用MPL 2.0开源协议
+本软件使用 [木兰宽松许可证第2版（MulanPSL v2）](LICENSE) 开源协议。
+
+> 许可证变更记录：**2026-09-05** 由 Mozilla Public License 2.0（MPL 2.0）更换为 MulanPSL v2。
 
 <br>
 <br>
